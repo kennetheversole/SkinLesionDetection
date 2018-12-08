@@ -1,26 +1,27 @@
-#%matplotlib inline
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import os
-
-
+import itertools
 from glob import glob
 import seaborn as sns
+
 from PIL import Image
-np.random.seed(123)
-from sklearn.preprocessing import label_binarize
-from sklearn.metrics import confusion_matrix
-import itertools
+from skimage.io import imsave
+
 
 from skimage.io import imsave
 
+
+#Machine learning 
+import tensorflow
+from tensorflow.python.client import device_lib
 import keras
 from keras.utils.np_utils import to_categorical # used for converting labels to one-hot-encoding
 from keras.models import Sequential
 from keras.layers import Dense, Dropout, Flatten, Conv2D, MaxPool2D
 from keras import backend as K
-import itertools
 from keras.layers.normalization import BatchNormalization
 from keras.utils.np_utils import to_categorical # convert to one-hot-encoding
 
@@ -28,6 +29,9 @@ from keras.optimizers import Adam
 from keras.preprocessing.image import ImageDataGenerator
 from keras.callbacks import ReduceLROnPlateau
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import label_binarize
+from sklearn.metrics import confusion_matrix
+
 
 
 #1. Function to plot model's validation loss and validation accuracy
@@ -53,8 +57,6 @@ def plot_model_history(model_history):
 
 
 
-
-
 base_skin_dir = os.path.join(os.getcwd(), "data")
 
 # Merging images from both folders HAM10000_images_part1.zip and HAM10000_images_part2.zip into one dictionary
@@ -76,24 +78,26 @@ lesion_type_dict = {
 tile_df = pd.read_csv(os.path.join(base_skin_dir, "HAM10000_metadata.csv"), engine='python')
 
 
-def createGraphs(tile_df):
+def create_visuals(tile_df):
 
+    graph_dir = os.path.join(os.getcwd(), 'graphs')
+
+    if (not (os.path.isdir(graph_dir))):
+        os.mkdir(graph_dir)
 
     # Creating New Columns for better readability
 
 
-    tile_df.describe(exclude=[np.number])
-
     fig, ax1 = plt.subplots(1, 1, figsize= (10, 5))
     tile_df['cell_type'].value_counts().plot(kind='bar', ax=ax1)
-    fig.savefig('data1.png', dpi=300)
+    fig.savefig('graphs/data1.png', dpi=300,bbox_inches='tight')
 
     tile_df = tile_df.drop(tile_df[tile_df.cell_type_idx == 4].iloc[:5000].index)
 
     fig, ax1 = plt.subplots(1, 1, figsize= (10, 5))
     tile_df['cell_type'].value_counts().plot(kind='bar', ax=ax1)
     tile_df['dx_type'].value_counts().plot(kind='bar')
-    fig.savefig('data2.png', dpi=300)
+    fig.savefig('graphs/data2.png', dpi=300 ,bbox_inches='tight')
 
 
     n_samples = 5
@@ -104,7 +108,7 @@ def createGraphs(tile_df):
         for c_ax, (_, c_row) in zip(n_axs, type_rows.sample(n_samples, random_state=2018).iterrows()):
             c_ax.imshow(c_row['image'])
             c_ax.axis('off')
-    fig.savefig('category_samples.png', dpi=300)
+    fig.savefig('graphs/category_samples.png', dpi=300, bbox_inches='tight')
 
 
 
@@ -148,7 +152,7 @@ def createGraphs(tile_df):
                 c_ax.axis('off')
                 c_ax.set_title('{:2.2f}'.format(c_row[sample_col]))
             n_axs[0].set_title(type_name)
-        fig.savefig('{}_samples.png'.format(sample_col), dpi=300)
+        fig.savefig('graphs/{}_samples.png'.format(sample_col), dpi=300)
 
 
 
@@ -157,36 +161,33 @@ def createGraphs(tile_df):
                         sort_values(['cell_type', 'Red_mean'])['image'].\
                         map(lambda x: x[::5, ::5]).values, 0)
     rgb_montage = np.stack([montage(rgb_stack[:, :, :, i]) for i in range(rgb_stack.shape[3])], -1)
-    print(rgb_montage.shape)
+    #print(rgb_montage.shape)
 
 
 
     fig, ax1 = plt.subplots(1, 1, figsize = (20, 20), dpi=300)
     ax1.imshow(rgb_montage)
-    fig.savefig('nice_montage.png')
-
-    imsave('full_dataset_montage.png', rgb_montage)
 
 
-
-def CNN(data_raw):
-
-    class_weights={
-    0: 1.0, # akiec
-    1: 1.0, # bcc
-    2: 1.0, # bkl
-    3: 1.0, # df
-    4: 3.0, # mel # Try to make the model more sensitive to Melanoma.
-    5: 1.0, # nv
-    6: 1.0, # vasc
-    }
+    imsave('graphs/full_dataset_montage.png', rgb_montage)
 
 
+
+def train_network(data):
+
+    #data.describe(exclude=[np.number])
     
-    features=data_raw.drop(columns=['cell_type_idx'],axis=1)
-    target=data_raw['cell_type_idx']
-    x_train_o, x_test_o, y_train_o, y_test_o = train_test_split(features, target, test_size=0.15,random_state=1234)
+    features=data.drop(columns=['cell_type_idx'],axis=1)
+    target=data['cell_type_idx']
 
+
+
+    #split the train and validation data. train on 80% test on 20%
+    x_train_o, x_test_o, y_train_o, y_test_o = train_test_split(features, target, test_size=0.20,random_state=1234)
+
+
+
+    #setup the train and test data
     x_train = np.asarray(x_train_o['image'].tolist())
     x_test = np.asarray(x_test_o['image'].tolist())
 
@@ -199,20 +200,18 @@ def CNN(data_raw):
     x_train = (x_train - x_train_mean)/x_train_std
     x_test = (x_test - x_test_mean)/x_test_std
 
-
-
-        
-
-    # Perform one-hot encoding on the labels
+    # Encode the labels for the train and testy  testdata
     y_train = to_categorical(y_train_o, num_classes = 7)
     y_test = to_categorical(y_test_o, num_classes = 7)
 
-    x_train, x_validate, y_train, y_validate = train_test_split(x_train, y_train, test_size = 0.15, random_state = 2)
+
+    #split the train and validation data. train on 90% test on 20%
+    x_train, x_validate, y_train, y_validate = train_test_split(x_train, y_train, test_size = 0.20, random_state = 2)
 
 
     
 
-    # Reshape image in 3 dimensions (height = 75px, width = 100px , canal = 3)
+    # Reshape images for the train, test and validation data
     x_train = x_train.reshape(x_train.shape[0], *(100,75, 3))
     x_test = x_test.reshape(x_test.shape[0], * (100,75, 3))
     x_validate = x_validate.reshape(x_validate.shape[0], * (100,75, 3))
@@ -220,14 +219,22 @@ def CNN(data_raw):
     input_shape = (100,75, 3)
     num_classes = 7
 
+
+
+
+    #This is the CNN network
+    #set up the model
     model = Sequential()
-    model.add(Conv2D(32, kernel_size=(3, 3),activation='relu',padding = 'Same',input_shape=input_shape))
-    model.add(Conv2D(32,kernel_size=(3, 3), activation='relu',padding = 'Same',))
+
+    #layer 1 32 fliters
+    model.add(Conv2D(32, kernel_size=(5, 5),activation='relu',padding = 'Same',input_shape=input_shape))
+    model.add(Conv2D(32,kernel_size=(5, 5), activation='relu',padding = 'Same',))
     model.add(MaxPool2D(pool_size = (2, 2)))
     model.add(Dropout(0.25))
 
-    model.add(Conv2D(64, (3, 3), activation='relu',padding = 'Same'))
-    model.add(Conv2D(64, (3, 3), activation='relu',padding = 'Same'))
+    #layer 2 32 fliters
+    model.add(Conv2D(64, (5, 5), activation='relu',padding = 'Same'))
+    model.add(Conv2D(64, (5, 5), activation='relu',padding = 'Same'))
     model.add(MaxPool2D(pool_size=(2, 2)))
     model.add(Dropout(0.40))
 
@@ -235,10 +242,10 @@ def CNN(data_raw):
     model.add(Dense(128, activation='relu'))
     model.add(Dropout(0.5))
     model.add(Dense(num_classes, activation='softmax'))
-   # model.summary()
+    
 
 
-    optimizer = Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False)
+    optimizer = Adam(lr=0.001, beta_1=0.99, beta_2=0.9999, epsilon=None, decay=0.0, amsgrad=False)
     model.compile(optimizer = optimizer , loss = "categorical_crossentropy", metrics=["accuracy"])
 
     learning_rate_reduction = ReduceLROnPlateau(monitor='val_acc', 
@@ -263,42 +270,79 @@ def CNN(data_raw):
 
     datagen.fit(x_train)
 
-    epochs = 10 
+    
+    
+
+    # Add weights to try to make the model more sensitive to melanoma
+    class_weights={
+        0: 1.0, # akiec
+        1: 1.0, # bcc
+        2: 1.0, # bkl
+        3: 1.0, # df
+        4: 2.5, # mel # Try to make the model more sensitive to Melanoma, because it is bad
+        5: 1.0, # nv
+        6: 1.0, # vasc
+    }
+
+
+
+
+    #setup the number of epochs and batch size(this is a work in progress)
+    epochs = 50
     batch_size = 10
-    history = model.fit_generator(datagen.flow(x_train,y_train, batch_size=batch_size),
-                              class_weight=class_weights,
-                              epochs = epochs, validation_data = (x_validate,y_validate),
-                              verbose = 1, steps_per_epoch=x_train.shape[0] // batch_size
+
+
+    model_history = model.fit_generator(datagen.flow(x_train,y_train, batch_size=batch_size),
+                              epochs = epochs, class_weight=class_weights, 
+                              validation_data = (x_validate,y_validate),
+                              verbose = 1, 
+                              steps_per_epoch=x_train.shape[0] // batch_size
                               , callbacks=[learning_rate_reduction])
     
 
-    loss, accuracy = model.evaluate(x_test, y_test, verbose=1)
-    loss_v, accuracy_v = model.evaluate(x_validate, y_validate, verbose=1)
-    print("Validation: accuracy = %f  ;  loss_v = %f" % (accuracy_v, loss_v))
-    print("Test: accuracy = %f  ;  loss = %f" % (accuracy, loss))
-    model.save("model.h5")
+    #loss, accuracy = model.evaluate(x_test, y_test, verbose=1)
+    #loss_v, accuracy_v = model.evaluate(x_validate, y_validate, verbose=1)
 
+
+    #print("Validation: accuracy = %f  ;  loss_v = %f" % (accuracy_v, loss_v))
+    #print("Test: accuracy = %f  ;  loss = %f" % (accuracy, loss))
+
+
+    #save the model to use for prediction
+    model.save("trainCNN")
+
+
+    plot_model_history(model_history)
+
+
+
+def setup_data():
+    skin_data = pd.read_csv(os.path.join(base_skin_dir, "HAM10000_metadata.csv"), engine='python')
+    
+    skin_data['path'] = skin_data['image_id'].map(imageid_path_dict.get)
+    skin_data['cell_type'] = skin_data['dx'].map(lesion_type_dict.get) 
+    skin_data['cell_type_idx'] = pd.Categorical(skin_data['cell_type']).codes   
+    skin_data['sex'].value_counts().plot(kind='bar')
+
+    skin_data['image'] = skin_data['path'].map(lambda x: np.asarray(Image.open(x).resize((100,75))))
+
+
+    skin_data['age'].fillna((tile_df['age'].mean()), inplace=True)
+
+    return skin_data
+
+
+
+#do prediction
 
 
 def main():
 
-
     #load and clean the data
-    tile_df = pd.read_csv(os.path.join(base_skin_dir, "HAM10000_metadata.csv"), engine='python')
+    skin_data = setup_data()
 
-
-    tile_df['path'] = tile_df['image_id'].map(imageid_path_dict.get)
-    tile_df['cell_type'] = tile_df['dx'].map(lesion_type_dict.get) 
-    tile_df['cell_type_idx'] = pd.Categorical(tile_df['cell_type']).codes   
-
-    tile_df['sex'].value_counts().plot(kind='bar')
-
-    tile_df['image'] = tile_df['path'].map(lambda x: np.asarray(Image.open(x).resize((100,75))))
-
-    tile_df['age'].fillna((tile_df['age'].mean()), inplace=True)
-
-  
-    CNN(tile_df)
+    create_visuals(skin_data)
+    train_network(skin_data)
 
 
 if __name__ == "__main__":
